@@ -1,0 +1,19 @@
+# 環境変数（機密情報）
+mcp-server/.env
+
+# インデックスデータ（個人のファイルパスが含まれる）
+mcp-server/data/
+
+# Pythonキャッシュ
+mcp-server/__pycache__/
+**/__pycache__/
+*.pyc
+
+# Node.js
+node_modules/
+
+# CDK生成物
+cdk/cdk.out/
+
+# Python仮想環境
+venv/

@@ -1,0 +1,10 @@
+llama-index
+llama-index-embeddings-bedrock
+llama-index-llms-bedrock
+llama-index-llms-bedrock-converse
+llama-index-vector-stores-faiss
+boto3
+faiss-cpu
+watchdog
+python-dotenv
+fastmcp
