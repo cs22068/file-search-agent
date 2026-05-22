@@ -1,50 +1,288 @@
-# File Search Agent 開発ドキュメント
+# File Search Agent 開発
 
 ## 1. プロジェクト概要
 
 ### 背景・動機
 Deploy-Agent（FastMCP × AWS Bedrock × LlamaIndex）の開発記事を参考に、同じ技術スタックを応用して個人用ファイル検索ツールを開発する。
 
-「あのファイルどこだっけ」という状況を解消するため、ファイル名ではなく**内容・文脈で検索できる仕組み**を構築する。
+特にエクスプローラーについて「あのファイルどこだっけ」という状況を解消するため、ファイル名だけではなく**内容・文脈で検索できる仕組み**を構築する。
+
+参考記事：[[Deploy-Agent開発 Vol.1] FastMCP × AWS Bedrockで「コードとドキュメントを読んで勝手にデプロイ計画を立てるAI」を作ってみた](https://qiita.com/kz-ow/items/ec9d115421e5a3da9076)
 
 ### やりたいこと
-自分のPC内のファイル（論文・入試資料・コード・メモなど）を自然言語で検索できるツールを作る。
+自分のPC内のファイルを自然言語で検索できるツールを作る。
 
----
+**注意：**
+PDFなどの大容量ファイルはインデックス化に時間がかかるため、現在は比較的容量が小さいテキストベースのファイルを対象としている。対象ファイルの詳細は要件定義を参照。
 
 ## 2. 要件定義
 
 ### 機能要件
-- 自然言語でPC内のファイルを検索できる
-- ファイル名ではなく**内容・文脈**で検索できる
-- 検索結果に参照ファイルのパスを表示する
+- 自然言語でPC内のファイルを検索可能
+- ファイル名だけでなく、**内容・文脈**で検索可能
 - ファイルの追加・変更・削除を自動検知してインデックスを更新する
 - Claude for Desktopのチャットから検索できる
 
 ### 非機能要件
-- ベクトルインデックスはローカルに保存（クラウド不要）
-- 月のランニングコストは数百円以内
-- GPUは不要（Bedrockのサーバー側で処理）
-- ノートPCで動作する
+- ベクトルとインデックスはローカルに保存
+- GPU不要でノートPCで動作する
 
 ### 対象ファイル
 - コードファイル（.py, .ts, .js など）
 - テキスト・Markdown（.txt, .md）
 - 設定ファイル（.json, .yaml など）
-- ※PDFは大容量のため今回は除外
+- （※PDFなどは大容量のため今回は除外）
 
 ### 除外ファイル
 - 画像・動画・音声
 - 圧縮ファイル・バイナリ
 - 依存関係フォルダ（node_modules, venv など）
 - Gitの内部ファイル
-- 機密情報（.env）
+- 非公開情報（.env）
 
 ---
 
 ## 3. システム設計
 
 ### アーキテクチャ
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>System Architecture</title>
+<style>
+    /* 色と共通設定の定義 */
+    :root {
+        --bg-main: #1a1a1a;
+        --bg-pc: #333333;
+        --bg-aws: #173b6c;
+        --color-ui: #4b378b;
+        --color-local: #185e43;
+        --color-faiss: #8a571c;
+        --color-aws-box: rgba(255, 255, 255, 0.05);
+        --border-aws: #3b82f6;
+        --text-main: #ffffff;
+        --text-sub: #b3b3b3;
+    }
+
+    body {
+        background-color: var(--bg-main);
+        color: var(--text-main);
+        font-family: sans-serif;
+        display: flex;
+        justify-content: center;
+        padding: 40px;
+    }
+
+    .architecture-container {
+        display: flex;
+        align-items: flex-start;
+        gap: 15px;
+    }
+
+    /* コンテナの共通スタイル */
+    .container-box {
+        border-radius: 12px;
+        padding: 24px;
+        position: relative;
+    }
+
+    .pc-container {
+        background-color: var(--bg-pc);
+        border: 1px solid #555;
+        width: 480px;
+    }
+
+    .aws-container {
+        background-color: var(--bg-aws);
+        width: 280px;
+        margin-top: 180px; /* LlamaIndexの高さに合わせる調整 */
+    }
+
+    h2 {
+        font-size: 16px;
+        text-align: center;
+        margin: 0 0 20px 0;
+        font-weight: normal;
+    }
+
+    /* ノード（各ブロック）の共通スタイル */
+    .node {
+        border-radius: 8px;
+        padding: 16px;
+        text-align: center;
+        margin-bottom: 0;
+    }
+
+    .node-title {
+        font-weight: bold;
+        font-size: 16px;
+        margin-bottom: 6px;
+    }
+
+    .node-desc {
+        font-size: 12px;
+        color: #e0e0e0;
+    }
+
+    /* 個別の色指定 */
+    .ui-node { background-color: var(--color-ui); }
+    .local-node { background-color: var(--color-local); }
+    .faiss-node { background-color: var(--color-faiss); width: 60%; }
+    
+    .target-files {
+        border: 1px solid #666;
+        background-color: transparent;
+        margin-top: 40px;
+    }
+
+    .aws-node {
+        border: 1px solid var(--border-aws);
+        background-color: var(--color-aws-box);
+        margin-bottom: 12px;
+    }
+
+    /* 矢印と接続線の共通スタイル */
+    .connection {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-sub);
+        font-size: 12px;
+        margin: 8px 0;
+    }
+
+    .arrow-vertical {
+        font-size: 20px;
+        line-height: 1;
+    }
+
+    .arrow-horizontal-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        margin-top: 240px; /* LlamaIndexとAWSの間に配置 */
+        color: var(--text-sub);
+        font-size: 12px;
+    }
+
+    /* 凡例 */
+    .legend {
+        position: absolute;
+        bottom: 160px;
+        right: 24px;
+        border: 1px solid #555;
+        padding: 10px;
+        border-radius: 6px;
+        font-size: 12px;
+        background-color: rgba(0,0,0,0.2);
+    }
+
+    .legend-item {
+        display: flex;
+        align-items: center;
+        margin-bottom: 4px;
+    }
+
+    .legend-item:last-child { margin-bottom: 0; }
+
+    .color-box {
+        width: 12px;
+        height: 12px;
+        margin-right: 8px;
+        border-radius: 2px;
+    }
+</style>
+</head>
+<body>
+
+<div class="architecture-container">
+    <div class="container-box pc-container">
+        <h2>あなたのPC</h2>
+        
+        <div class="node ui-node">
+            <div class="node-title">Claude for Desktop</div>
+            <div class="node-desc">「あの論文どこだっけ」と話しかける</div>
+        </div>
+
+        <div class="connection">
+            <div>↕</div>
+            <div>MCP Protocol</div>
+        </div>
+
+        <div class="node local-node">
+            <div class="node-title">MCP Server (FastMCP)</div>
+            <div class="node-desc">検索ツールを公開 / リクエストをさばく</div>
+        </div>
+
+        <div class="connection">
+            <div class="arrow-vertical">↓</div>
+        </div>
+
+        <div class="node local-node">
+            <div class="node-title">検索エンジン (LlamaIndex)</div>
+            <div class="node-desc">クエリをベクトル化 → 類似ファイルを検索</div>
+        </div>
+
+        <div class="connection">
+            <div>↕</div>
+        </div>
+
+        <div class="node faiss-node">
+            <div class="node-title">FAISS Index</div>
+            <div class="node-desc">ベクトルをローカル保存</div>
+        </div>
+
+        <div class="connection" style="align-items: flex-start; margin-left: 30%;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="arrow-vertical">↑</span>
+                <span>初回インデックス化</span>
+            </div>
+        </div>
+
+        <div class="node target-files">
+            <div class="node-title">対象ファイル (PC内)</div>
+            <div class="node-desc">論文PDF・Word・コード・テキスト<br>入試資料・メモなど</div>
+        </div>
+
+        <div class="legend">
+            <div style="margin-bottom: 8px; font-weight: bold;">凡例</div>
+            <div class="legend-item"><div class="color-box ui-node"></div>UI</div>
+            <div class="legend-item"><div class="color-box local-node"></div>ローカル処理</div>
+            <div class="legend-item"><div class="color-box" style="background-color: var(--border-aws);"></div>AWS</div>
+        </div>
+    </div>
+
+    <div class="arrow-horizontal-container">
+        <div>AWS SDK</div>
+        <div style="font-size: 24px; letter-spacing: -4px;">←→</div>
+    </div>
+
+    <div class="container-box aws-container">
+        <h2>AWS Bedrock</h2>
+        
+        <div class="node aws-node">
+            <div class="node-title" style="font-size: 14px;">Titan Embed v2</div>
+            <div class="node-desc">テキストをベクトル化</div>
+        </div>
+
+        <div class="node aws-node">
+            <div class="node-title" style="font-size: 14px;">Claude 3.5 Sonnet</div>
+            <div class="node-desc">回答を自然言語で生成</div>
+        </div>
+
+        <div class="node aws-node" style="padding: 8px;">
+            <div class="node-title" style="font-size: 12px; margin: 0;">CDKでIAM管理</div>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>
 
 ```
 あなたのPC
