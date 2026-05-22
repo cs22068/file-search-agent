@@ -48,59 +48,71 @@ PDFなどの大容量ファイルはインデックス化に時間がかかる�
 
 ```mermaid
 graph TB
+    %% 背景色と全体の設定
+    style graph fill:#1a1a1a;
+    classDef aws_container fill:#173b6c,stroke:#3b82f6,stroke-width:2px,color:white;
+    
+    %% "あなたのPC"コンテナ
     subgraph PC["あなたのPC"]
-        A[Claude for Desktop<br/>UI]
-        B[MCP Server FastMCP<br/>検索ツールを公開]
-        C[検索エンジン LlamaIndex<br/>クエリをベクトル化]
-        D[FAISS Index<br/>ベクトルをローカル保存]
-        E[対象ファイル PC内<br/>コード・テキスト・設定ファイル]
+        direction TB
+        A("Claude for Desktop<br/>「あの論文どこだっけ」と話しかける")
+        B("MCP Server (FastMCP)<br/>検索ツールを公開 / リクエストをさばく")
+        C("検索エンジン (LlamaIndex)<br/>クエリをベクトル化 → 類似ファイルを検索")
+        D("FAISS Index<br/>ベクトルをローカル保存")
+        E("対象ファイル (PC内)<br/>論文PDF・Word・コード・テキスト<br/>入試資料・メモなど")
         
+        %% PC内部の接続とラベル
         A <-->|MCP Protocol| B
         B --> C
         C <--> D
         E -->|初回インデックス化| D
+        
+        %% レイアウト強制 (EをDの下に配置)
+        E ~~~ D
+        
+        %% スタイル定義 (PC)
+        style A fill:#4b378b,color:white,stroke-width:0px,rx:8px,ry:8px;
+        style B fill:#185e43,color:white,stroke-width:0px,rx:8px,ry:8px;
+        style C fill:#185e43,color:white,stroke-width:0px,rx:8px,ry:8px;
+        style D fill:#8a571c,color:white,stroke-width:0px,rx:8px,ry:8px;
+        style E fill:#333,color:white,stroke:#666,stroke-width:1px,rx:8px,ry:8px;
+        
+        %% 凡例 (ハック)
+        Legend("<div>凡例</div><div style='display:flex;align-items:center;'><div style='width:12px;height:12px;background-color:#4b378b;margin-right:8px;border-radius:2px;'></div>UI</div><div style='display:flex;align-items:center;'><div style='width:12px;height:12px;background-color:#185e43;margin-right:8px;border-radius:2px;'></div>ローカル処理</div><div style='display:flex;align-items:center;'><div style='width:12px;height:12px;background-color:#3b82f6;margin-right:8px;border-radius:2px;'></div>AWS</div>")
+        style Legend fill:none,color:#b3b3b3,stroke:#555,stroke-width:1px,rx:6px,ry:6px,font-size:12px;
+        %% 凡例を右下に配置するレイアウトハック
+        E ~~~ Legend
+        C ~~~ Legend
+        D ~~~ Legend
     end
-    
-    subgraph AWS["AWS Bedrock"]
-        F[Titan Embed v2<br/>テキストをベクトル化]
-        G[Claude 3.5 Sonnet<br/>回答を自然言語で生成]
-        H[CDKでIAM管理]
-    end
-    
-    C <-->|AWS SDK boto3| F
-    C <-->|AWS SDK boto3| G
-    
-    style A fill:#4b378b
-    style B fill:#185e43
-    style C fill:#185e43
-    style D fill:#8a571c
-    style E fill:#333
-    style F fill:#173b6c
-    style G fill:#173b6c
-    style H fill:#173b6c
-```
 
-あなたのPC
-┌─────────────────────────────────────────┐
-│                                         │
-│  Claude for Desktop                     │
-│       ↕ MCP Protocol                   │
-│  MCP Server (FastMCP) [server.py]       │
-│       ↕                                 │
-│  検索エンジン [searcher.py]              │
-│       ↕                                 │
-│  インデクサー [indexer.py]               │
-│       ↕                                 │
-│  FAISSインデックス（ローカル保存）        │
-│                                         │
-└─────────────────────────────────────────┘
-         ↕ AWS SDK (boto3)
-┌─────────────────────────────────────────┐
-│  AWS Bedrock (ap-northeast-1)           │
-│  ・Titan Embed Text v2（ベクトル化）     │
-│  ・Claude Sonnet 4.6 JP推論プロファイル  │
-│    （回答生成）                          │
-└─────────────────────────────────────────┘
+    %% "AWS Bedrock"コンテナ
+    subgraph AWS["AWS Bedrock"]
+        direction TB
+        F("Titan Embed v2<br/>テキストをベクトル化")
+        G("Claude 3.5 Sonnet<br/>回答を自然言語で生成")
+        H("CDK で IAM 管理")
+        
+        %% AWS内部の縦配置
+        F ~~~ G
+        G ~~~ H
+        
+        %% スタイル定義 (AWSノード)
+        style F fill:none,color:white,stroke:#3b82f6,stroke-width:1px,rx:8px,ry:8px;
+        style G fill:none,color:white,stroke:#3b82f6,stroke-width:1px,rx:8px,ry:8px;
+        style H fill:none,color:white,stroke:#3b82f6,stroke-width:1px,rx:8px,ry:8px;
+    end
+    
+    %% PCコンテナのスタイル
+    subgraph PC fill:#333,stroke:#555,stroke-width:1px,rx:12px,ry:12px;
+    end
+    
+    %% AWSコンテナのスタイル設定
+    class AWS aws_container;
+
+    %% PCとAWSの接続
+    C <-->|AWS SDK| F
+```
 
 ### 技術スタック
 
