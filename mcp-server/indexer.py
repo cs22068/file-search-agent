@@ -35,9 +35,9 @@ load_dotenv()
 # ============================================================
 # 設定
 # ============================================================
-TARGET_DIRS = [d.strip() for d in os.getenv("TARGET_DIRS", "").split(",") if d.strip()]
-INDEX_DIR   = Path(os.getenv("INDEX_DIR", "./data/index"))
-META_FILE   = Path(os.getenv("META_FILE", "./data/index_meta.json"))
+DEFAULT_TARGET_DIRS = [d.strip() for d in os.getenv("TARGET_DIRS", "").split(",") if d.strip()]
+DEFAULT_INDEX_DIR   = Path(os.getenv("INDEX_DIR", "./data/index"))
+DEFAULT_META_FILE   = Path(os.getenv("META_FILE", "./data/index_meta.json"))
 REGION      = os.getenv("AWS_DEFAULT_REGION", "ap-northeast-1")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "amazon.titan-embed-text-v2:0")
 
@@ -94,15 +94,15 @@ def init_embedding() -> BedrockEmbedding:
 #   "last_indexed": "2026-..."
 # }
 # ============================================================
-def load_meta() -> dict:
-    if META_FILE.exists():
-        with open(META_FILE, "r", encoding="utf-8") as f:
+def load_meta(meta_file: Path) -> dict:
+    if meta_file.exists():
+        with open(meta_file, "r", encoding="utf-8") as f:
             return json.load(f)
     return {}
 
-def save_meta(meta: dict):
-    META_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(META_FILE, "w", encoding="utf-8") as f:
+def save_meta(meta: dict, meta_file: Path):
+    meta_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(meta_file, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
 def chunk_hash(text: str) -> str:
@@ -111,18 +111,18 @@ def chunk_hash(text: str) -> str:
 # ============================================================
 # インデックスの読み込み or 新規作成
 # ============================================================
-def load_or_create_index(embed_model: BedrockEmbedding) -> VectorStoreIndex:
-    INDEX_DIR.mkdir(parents=True, exist_ok=True)
-    faiss_file = INDEX_DIR / "faiss.index"
+def load_or_create_index(embed_model: BedrockEmbedding, index_dir: Path) -> VectorStoreIndex:
+    index_dir.mkdir(parents=True, exist_ok=True)
+    faiss_file = index_dir / "faiss.index"
     
-    if (INDEX_DIR / "docstore.json").exists() and faiss_file.exists():
+    if (index_dir / "docstore.json").exists() and faiss_file.exists():
         log("[Indexer] 既存FAISSインデックスを読み込み中...")
         # FAISSインデックスを読み込み
         faiss_index = faiss.read_index(str(faiss_file))
         vector_store = FaissVectorStore(faiss_index=faiss_index)
         storage = StorageContext.from_defaults(
             vector_store=vector_store,
-            persist_dir=str(INDEX_DIR)
+            persist_dir=str(index_dir)
         )
         return load_index_from_storage(storage)
     else:
@@ -138,16 +138,20 @@ def load_or_create_index(embed_model: BedrockEmbedding) -> VectorStoreIndex:
 # ============================================================
 class FileIndexer:
 
-    def __init__(self):
+    def __init__(self, target_dirs=None, index_dir=None, meta_file=None):
+        # 引数が渡されればそれを使い、なければデフォルト設定を使う
+        self.target_dirs = target_dirs if target_dirs is not None else DEFAULT_TARGET_DIRS
+        self.index_dir   = Path(index_dir) if index_dir else DEFAULT_INDEX_DIR
+        self.meta_file   = Path(meta_file) if meta_file else DEFAULT_META_FILE
         embed_model  = init_embedding()
-        self.index   = load_or_create_index(embed_model)
-        self.meta    = load_meta()
+        self.index   = load_or_create_index(embed_model, self.index_dir)
+        self.meta    = load_meta(self.meta_file)
 
     def update(self):
         log(f"[Indexer] 差分スキャン開始: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
         current_files: set[str] = set()
-        for target_dir in TARGET_DIRS:
+        for target_dir in self.target_dirs:
             if not Path(target_dir).exists():
                 log(f"[Indexer] ディレクトリが見つかりません: {target_dir}")
                 continue
@@ -168,7 +172,7 @@ class FileIndexer:
         if to_process:
             self._update_files_by_chunks(to_process)
 
-        save_meta(self.meta)
+        save_meta(self.meta, self.meta_file)
         log(f"[Indexer] 差分更新完了 (合計 {len(current_files)} ファイル管理中)")
 
     def _update_files_by_chunks(self, file_paths: list[str]):
@@ -259,11 +263,11 @@ class FileIndexer:
                 log(f"[Indexer] エラー ({path}): {e}")
 
         if changed:
-            self.index.storage_context.persist(persist_dir=str(INDEX_DIR))
+            self.index.storage_context.persist(persist_dir=str(self.index_dir))
             # FAISSインデックスを保存
             faiss.write_index(
                 self.index.vector_store.client,
-                str(INDEX_DIR / "faiss.index")
+                str(self.index_dir / "faiss.index")
             )
             log("[Indexer] インデックスを保存しました")
 
@@ -279,11 +283,11 @@ class FileIndexer:
                 except Exception as e:
                     log(f"[Indexer] 削除エラー ({path}): {e}")
         if removed:
-            self.index.storage_context.persist(persist_dir=str(INDEX_DIR))
+            self.index.storage_context.persist(persist_dir=str(self.index_dir))
             # FAISSインデックスを保存
             faiss.write_index(
                 self.index.vector_store.client,
-                str(INDEX_DIR / "faiss.index")
+                str(self.index_dir / "faiss.index")
             )
         log(f"[Indexer] {removed} 件を除外しました")
 
@@ -346,7 +350,7 @@ class IndexUpdateHandler(FileSystemEventHandler):
 def start_watcher(indexer: FileIndexer) -> Observer:
     handler  = IndexUpdateHandler(indexer)
     observer = Observer()
-    for target_dir in TARGET_DIRS:
+    for target_dir in indexer.target_dirs:
         if Path(target_dir).exists():
             observer.schedule(handler, path=target_dir, recursive=True)
             log(f"[Watcher] 監視開始: {target_dir}")

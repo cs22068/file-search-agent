@@ -26,7 +26,7 @@ load_dotenv() # .envファイルから環境変数を読み込む
 # ============================================================
 # 設定
 # ============================================================
-INDEX_DIR   = Path(os.getenv("INDEX_DIR", "./data/index"))
+DEFAULT_INDEX_DIR = Path(os.getenv("INDEX_DIR", "./data/index"))
 REGION      = os.getenv("AWS_DEFAULT_REGION", "ap-northeast-1")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "amazon.titan-embed-text-v2:0")
 LLM_MODEL   = os.getenv("LLM_MODEL", "jp.anthropic.claude-sonnet-4-6")
@@ -100,16 +100,17 @@ def init_models():
         chunk_overlap=32,
     )
 
-def _load_query_engine():
-    if not (INDEX_DIR / "docstore.json").exists():
+def _load_query_engine(index_dir: Path):
+    """指定されたindex_dirからクエリエンジンを作成して返す"""
+    if not (index_dir / "docstore.json").exists():
         return None
 
-    faiss_file = INDEX_DIR / "faiss.index"
+    faiss_file = index_dir / "faiss.index"
     faiss_index = faiss.read_index(str(faiss_file))
     vector_store = FaissVectorStore(faiss_index=faiss_index)
     storage = StorageContext.from_defaults(
         vector_store=vector_store,
-        persist_dir=str(INDEX_DIR)
+        persist_dir=str(index_dir)
     )
     index = load_index_from_storage(storage)
     return index.as_query_engine(
@@ -122,13 +123,15 @@ def _load_query_engine():
 # ============================================================
 class FileSearcher:
 
-    def __init__(self):
+    def __init__(self, index_dir=None):
+        # 引数が渡されればそれを使い、なければデフォルト設定を使う
+        self.index_dir = Path(index_dir) if index_dir else DEFAULT_INDEX_DIR
         init_models()
         self._query_engine = None
 
-        if (INDEX_DIR / "docstore.json").exists():
+        if (self.index_dir / "docstore.json").exists():
             log("[Searcher] インデックスを読み込み中...")
-            self._query_engine = _load_query_engine()
+            self._query_engine = _load_query_engine(self.index_dir)
             log("[Searcher] 準備完了")
         else:
             log("[Searcher] インデックスなし。バックグラウンドで作成中...")
@@ -137,9 +140,9 @@ class FileSearcher:
         """クエリエンジンが使えるか確認。なければ再ロードを試みる"""
         if self._query_engine is not None:
             return True
-        if (INDEX_DIR / "docstore.json").exists():
+        if (self.index_dir / "docstore.json").exists():
             log("[Searcher] インデックスが完成しました。読み込み中...")
-            self._query_engine = _load_query_engine()
+            self._query_engine = _load_query_engine(self.index_dir)
             log("[Searcher] 準備完了")
             return True
         return False

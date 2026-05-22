@@ -5,9 +5,9 @@ Claude for Desktopから自然言語でPC内のファイルを検索できる。
 起動方法:
   python server.py
 """
-import os
 import hashlib
 import threading
+from pathlib import Path
 from fastmcp import FastMCP
 from searcher import FileSearcher              # 検索エンジン
 from indexer import FileIndexer, start_watcher # インデクサーとファイル監視
@@ -30,56 +30,44 @@ observer = start_watcher(indexer)
 # ============================================================
 
 def search_in_custom_dirs(query: str, target_dirs: str) -> str:
- 
-    # パスをMD5ハッシュ化してフォルダ名にする
-    # 例: "C:/Users/論文,C:/Users/研究" → "a3f9c2b1d4e5"
+    base_dir = Path(__file__).parent
     dir_hash = hashlib.md5(target_dirs.encode("utf-8")).hexdigest()[:12]
-    custom_index_dir = f"./data/custom/{dir_hash}/index"
-    custom_meta_file = f"./data/custom/{dir_hash}/index_meta.json"
- 
-    # 現在の環境変数を退避
-    original_target_dirs = os.getenv("TARGET_DIRS", "")
-    original_index_dir   = os.getenv("INDEX_DIR",   "./data/index")
-    original_meta_file   = os.getenv("META_FILE",   "./data/index_meta.json")
- 
-    # カスタムパス用の環境変数に切り替え
-    os.environ["TARGET_DIRS"] = target_dirs
-    os.environ["INDEX_DIR"]   = custom_index_dir
-    os.environ["META_FILE"]   = custom_meta_file
- 
-    try:
-        # FileIndexer・FileSearcherは起動時に環境変数を読み込むため
-        # 環境変数切り替え後にインスタンスを作成する
-        temp_indexer = FileIndexer()
-        temp_indexer.update()  # 初回は全件作成、2回目以降は差分更新
- 
-        temp_searcher = FileSearcher()
-        return temp_searcher.search(query)
- 
-    finally:
-        # 必ず元の環境変数に戻す
-        os.environ["TARGET_DIRS"] = original_target_dirs
-        os.environ["INDEX_DIR"]   = original_index_dir
-        os.environ["META_FILE"]   = original_meta_file
+    custom_index_dir = str(base_dir / "data" / "custom" / dir_hash / "index")
+    custom_meta_file = str(base_dir / "data" / "custom" / dir_hash / "index_meta.json")
+    
+    dirs = [d.strip() for d in target_dirs.split(",") if d.strip()]
+    temp_indexer = FileIndexer(
+        target_dirs=dirs,
+        index_dir=custom_index_dir,
+        meta_file=custom_meta_file,
+    )
+    temp_indexer.update()
+    temp_searcher = FileSearcher(index_dir=custom_index_dir)
+    return temp_searcher.search(query)
 
 
 @mcp.tool()
 def search_files(query: str, target_dirs: str = "") -> str:
     """
     【エクスプローラーについて】PC内のファイルを自然言語で検索します。
-    
+
     このツールは「エクスプローラーについて」という言葉が含まれる質問にのみ使用してください。
+
+    【重要】ユーザーの入力に " で囲まれたパスがある場合、
+    その " の中身を必ずtarget_dirsに設定してください。
+    queryにはパスを含めないでください。
+
     例:
-    - 「エクスプローラーについて、機械学習のファイルはどこ？」
-    - 「エクスプローラーについて、IAMロールの定義を探して」
-    - 「エクスプローラーについて、C:/Documents の中からPythonコードを検索」
-    
-    それ以外の一般的な質問（コード生成、説明、知識など）には使用しないでください。
-    
+    - 「エクスプローラーについて "C:/Users/論文" の中を検索して」
+      → query="検索したい内容", target_dirs="C:/Users/論文"
+    - 「エクスプローラーについて "C:/Users/A,C:/Users/B" を検索して」
+      → query="検索したい内容", target_dirs="C:/Users/A,C:/Users/B"
+    - 「エクスプローラーについて IAMロールの定義を探して」（"なし）
+      → query="IAMロールの定義", target_dirs=""（省略）
+
     Args:
-        query: 検索したい内容の自然言語クエリ
-        target_dirs: 検索対象のディレクトリパス（カンマ区切りで複数指定可能）
-                     例: "C:/Users/name/Documents,C:/Users/name/Projects"
+        query: 検索したい内容の自然言語クエリ（パスは含めない）
+        target_dirs: " で囲まれたディレクトリパス（カンマ区切りで複数指定可能）
                      省略時は環境変数TARGET_DIRSのパスを使用
     Returns:
         検索結果と参照ファイルのパス
