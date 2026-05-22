@@ -46,201 +46,111 @@ PDFなどの大容量ファイルはインデックス化に時間がかかる�
 
 ### アーキテクチャ
 
-```mermaid
-graph TB
-    %% 背景色と全体の設定
-    style graph fill:#1a1a1a;
-    classDef aws_container fill:#173b6c,stroke:#3b82f6,stroke-width:2px,color:white;
-    
-    %% "あなたのPC"コンテナ
-    subgraph PC["あなたのPC"]
-        direction TB
-        A("Claude for Desktop<br/>「あの論文どこだっけ」と話しかける")
-        B("MCP Server (FastMCP)<br/>検索ツールを公開 / リクエストをさばく")
-        C("検索エンジン (LlamaIndex)<br/>クエリをベクトル化 → 類似ファイルを検索")
-        D("FAISS Index<br/>ベクトルをローカル保存")
-        E("対象ファイル (PC内)<br/>論文PDF・Word・コード・テキスト<br/>入試資料・メモなど")
-        
-        %% PC内部の接続とラベル
-        A <-->|MCP Protocol| B
-        B --> C
-        C <--> D
-        E -->|初回インデックス化| D
-        
-        %% レイアウト強制 (EをDの下に配置)
-        E ~~~ D
-        
-        %% スタイル定義 (PC)
-        style A fill:#4b378b,color:white,stroke-width:0px,rx:8px,ry:8px;
-        style B fill:#185e43,color:white,stroke-width:0px,rx:8px,ry:8px;
-        style C fill:#185e43,color:white,stroke-width:0px,rx:8px,ry:8px;
-        style D fill:#8a571c,color:white,stroke-width:0px,rx:8px,ry:8px;
-        style E fill:#333,color:white,stroke:#666,stroke-width:1px,rx:8px,ry:8px;
-        
-        %% 凡例 (ハック)
-        Legend("<div>凡例</div><div style='display:flex;align-items:center;'><div style='width:12px;height:12px;background-color:#4b378b;margin-right:8px;border-radius:2px;'></div>UI</div><div style='display:flex;align-items:center;'><div style='width:12px;height:12px;background-color:#185e43;margin-right:8px;border-radius:2px;'></div>ローカル処理</div><div style='display:flex;align-items:center;'><div style='width:12px;height:12px;background-color:#3b82f6;margin-right:8px;border-radius:2px;'></div>AWS</div>")
-        style Legend fill:none,color:#b3b3b3,stroke:#555,stroke-width:1px,rx:6px,ry:6px,font-size:12px;
-        %% 凡例を右下に配置するレイアウトハック
-        E ~~~ Legend
-        C ~~~ Legend
-        D ~~~ Legend
-    end
-
-    %% "AWS Bedrock"コンテナ
-    subgraph AWS["AWS Bedrock"]
-        direction TB
-        F("Titan Embed v2<br/>テキストをベクトル化")
-        G("Claude 3.5 Sonnet<br/>回答を自然言語で生成")
-        H("CDK で IAM 管理")
-        
-        %% AWS内部の縦配置
-        F ~~~ G
-        G ~~~ H
-        
-        %% スタイル定義 (AWSノード)
-        style F fill:none,color:white,stroke:#3b82f6,stroke-width:1px,rx:8px,ry:8px;
-        style G fill:none,color:white,stroke:#3b82f6,stroke-width:1px,rx:8px,ry:8px;
-        style H fill:none,color:white,stroke:#3b82f6,stroke-width:1px,rx:8px,ry:8px;
-    end
-    
-    %% PCコンテナのスタイル
-    subgraph PC fill:#333,stroke:#555,stroke-width:1px,rx:12px,ry:12px;
-    end
-    
-    %% AWSコンテナのスタイル設定
-    class AWS aws_container;
-
-    %% PCとAWSの接続
-    C <-->|AWS SDK| F
-```
+---
 
 ### 技術スタック
 
-| 役割 | 技術 |
+| 技術 | 役割 |
 |------|------|
-| UIフレームワーク | FastMCP |
-| RAGフレームワーク | LlamaIndex |
-| Embedding | Amazon Titan Embed Text v2 |
-| LLM | Claude Sonnet 4.6（JP推論プロファイル） |
-| ベクトルDB | FAISS（ローカル保存） |
-| ファイル監視 | watchdog |
-| インフラ管理 | AWS CDK（TypeScript） |
-| 言語 | Python 3.13 |
+| AWS CDK（TypeScript） | インフラ管理（IAMリソース定義） |
+| Python 3.13.5 | 開発言語 |
+| FastMCP | UIフレームワーク（MCPサーバー） |
+| LlamaIndex | RAGフレームワーク（ベクトル検索・インデックス管理） |
+| FAISS | ベクトルデータベース（ローカル保存） |
+| Amazon Bedrock - Titan Embed Text v2 | Embeddingモデル（テキストのベクトル化） |
+| Amazon Bedrock - Claude Sonnet 4.6（JP推論プロファイル経由） | LLM（自然言語での回答生成） |
 
-### データフロー
-
-**インデックス化（初回・差分更新）**
-```
-PC内ファイル
-→ ハッシュ値で差分検出
-→ SimpleDirectoryReader でテキスト抽出
-→ Titan Embed Text v2 でベクトル化（Bedrock API）
-→ FAISS インデックスにローカル保存
-→ メタデータ（ハッシュ・更新日時）を JSON で管理
-```
-
-**検索時**
-```
-ユーザーのクエリ（自然言語）
-→ Titan Embed Text v2 でベクトル化
-→ FAISS で類似チャンク上位5件を取得
-→ Claude Sonnet 4.6 が自然言語で回答生成
-→ 参照ファイルパスと合わせて返答
-```
 
 ### プロジェクト構成
 
 ```
 file-search-agent/
-├── cdk/                        # AWS CDK（インフラ管理）
+├── cdk/                         # AWS CDK（インフラ管理）
 │   ├── bin/
-│   │   └── cdk.ts              # CDKエントリーポイント
+│   │   └── cdk.ts               # CDKエントリーポイント
 │   ├── lib/
 │   │   └── file-search-stack.ts # IAMリソース定義
 │   └── package.json
-├── mcp-server/                 # アプリケーション本体
-│   ├── server.py               # Phase 4: FastMCP MCPサーバー
-│   ├── indexer.py              # Phase 2: インデクサー
-│   ├── searcher.py             # Phase 3: 検索エンジン
+├── mcp-server/                  # アプリケーション本体
+│   ├── server.py                # MCPサーバー
+│   ├── indexer.py               # インデクサー
+│   ├── searcher.py              # 検索エンジン
 │   ├── requirements.txt
-│   ├── .env                    # 認証情報・設定
+│   ├── .env                     # 認証情報・設定
 │   └── data/
-│       ├── index/              # FAISSインデックス（自動生成）
-│       └── index_meta.json     # 差分更新用メタデータ
-└── venv/                       # Python仮想環境
+│       ├── index/               # FAISSインデックス（自動生成）
+│       └── index_meta.json      # 差分更新用メタデータ
+└── venv/                        # Python仮想環境
 ```
-
 ---
 
 ## 4. 環境構築
 
-### 前提条件
-- Python 3.13
-- Node.js（CDK用）
-- AWS CLI
-- AWS CDK CLI（`npm install -g aws-cdk`）
+#### Node.jsのインストール
+```
+sudo apt update
+sudo apt install -y curl unzip
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
+```
+#### 確認
+```
+node -v
+  v22.14.0
+```
+
+#### AWS CLIv2のインストール
+```
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+```
+#### 確認
+```
+aws --version
+  aws-cli/2.24.20 Python/3.12.9 Windows/11 exe/AMD64
+```
+
+#### AWS CDKのインストール
+```
+sudo npm install -g aws-cdk
+```
+#### 確認
+```
+cdk --version
+  2.1122.0 (build c8f270c)
+```
 
 ### Python環境のセットアップ
 
 ```powershell
 # 仮想環境の作成
-cd file-search-agent
 python -m venv venv
-.\venv\Scripts\Activate.ps1
+.\venv\Scripts\Activate
 
 # ライブラリのインストール
-pip install -r mcp-server/requirements.txt
-```
-
-### requirements.txt
-
-```
-llama-index
-llama-index-embeddings-bedrock
-llama-index-llms-bedrock
-llama-index-llms-bedrock-converse
-boto3
-faiss-cpu
-watchdog
-python-dotenv
-fastmcp
+pip install -r requirements.txt
 ```
 
 ### AWS認証設定
 
-```powershell
+```
 aws configure
-# AWS Access Key ID: （natorihirofumi_cli のキー）
-# AWS Secret Access Key: （シークレットキー）
-# Default region name: ap-northeast-1
+
+# AWS Access Key ID: <アクセスキー>
+# AWS Secret Access Key: <シークレットキー>
+# Default region name: <リージョン名>
 # Default output format: json
 ```
-
-### .env の設定
-
-```env
-AWS_ACCESS_KEY_ID=（natorihirofumi_cli のアクセスキー）
-AWS_SECRET_ACCESS_KEY=（シークレットキー）
-AWS_DEFAULT_REGION=ap-northeast-1
-
-TARGET_DIRS=C:/Users/nh200/Cloude_Application_Development/file-search-agent/cdk,C:/Users/nh200/Cloude_Application_Development/file-search-agent/mcp-server
-INDEX_DIR=./data/index
-META_FILE=./data/index_meta.json
-WATCH_ENABLED=true
-EMBED_MODEL=amazon.titan-embed-text-v2:0
-LLM_MODEL=jp.anthropic.claude-sonnet-4-6
-```
-
 ---
 
-## 5. AWSインフラ構築（Phase 1） ✅
+## 5. AWSインフラ構築
 
 ### CDKでIAMリソースをデプロイ
 
-```powershell
+```
 cd cdk
 npm install
-cdk bootstrap   # 初回のみ
 cdk deploy
 ```
 
@@ -252,85 +162,85 @@ cdk deploy
 | IAM Policy: `FileSearchBedrockPolicy` | Bedrock権限ポリシー |
 | IAM Access Key | .envに設定するキー |
 
-> **注意**: 現在は開発中のため`natorihirofumi_cli`（AdministratorAccess）のキーを使用。完成後に`file-search-bedrock-user`のキーに切り替える予定。
-
 ### 許可しているBedrockリソース
 
 ```
-# Embedding
+# Embeddingモデル
 arn:aws:bedrock:ap-northeast-1::foundation-model/amazon.titan-embed-text-v2:0
 
 # LLM（JP推論プロファイル）
 arn:aws:bedrock:ap-northeast-1:716287580111:inference-profile/jp.anthropic.claude-sonnet-4-6
+
+# ルーティング先のモデル
+'arn:aws:bedrock:ap-northeast-1::foundation-model/anthropic.claude-sonnet-4-6',
+'arn:aws:bedrock:ap-northeast-3::foundation-model/anthropic.claude-sonnet-4-6',
 ```
 
+### デプロイ後の.env の設定
+
+```env
+AWS_ACCESS_KEY_ID=<`file-search-bedrock-user`のアクセスキー>
+AWS_SECRET_ACCESS_KEY=<`file-search-bedrock-user`のシークレットキー>
+AWS_DEFAULT_REGION=<リージョン名>
+
+TARGET_DIRS=<デフォルトで指定するパス>
+INDEX_DIR=./data/index
+META_FILE=./data/index_meta.json
+WATCH_ENABLED=true
+EMBED_MODEL=amazon.titan-embed-text-v2:0
+LLM_MODEL=jp.anthropic.claude-sonnet-4-6
+```
 ---
 
-## 6. インデクサー実装（Phase 2） ✅
+## 6. インデクサー: indexer.py
 
 ### 主要機能
 
 **差分更新**
-- ファイルのMD5ハッシュ値を`index_meta.json`で管理
+- ファイルのMD5ハッシュ値を `index_meta.json` で管理
 - 前回インデックス化以降に変更・追加されたファイルのみ再処理
 - 削除されたファイルはインデックスから除外
 
-**watchdog自動監視**
-- ファイルの追加・変更・削除・移動を検知
-- デバウンス処理（3秒）で連続イベントをまとめて1回の更新に
-
-**ノイズ除外**
-- 画像・動画・音声・バイナリを除外
-- node_modules・venv・.gitなどを除外
-- .env・data/フォルダ自身も除外（無限ループ防止）
-
-**注意点**
-- printは全てstderrに出力する（MCPのstdio通信を汚染しないため）
-- 絵文字はWindowsのcp932エンコーディングでクラッシュするため使用禁止
+**watchdogによる自動監視**
+- ファイルの追加・変更・削除・移動をリアルタイム監視
 
 ### 実行方法
 
-```powershell
+```
 cd mcp-server
 
 # 差分更新を1回実行
 python indexer.py
 
-# 差分更新後、watchdogで常駐監視
+# 差分更新後、watchdogでリアルタイム監視
 python indexer.py --watch
 ```
-
 ---
 
-## 7. 検索エンジン実装（Phase 3） ✅
+## 7. 検索エンジン: search.py
 
 ### 主要機能
 - FAISSインデックスからクエリに類似する上位5件のチャンクを取得
-- Claude Sonnet 4.6が自然言語で回答を生成
+- Amazon Bedrockが自然言語で回答を生成
 - 参照したファイルのパスも合わせて返す
-
-### LlamaIndexとboto3の使い分け
-
-LlamaIndexの`BedrockConverse`クラスはJP推論プロファイル（`jp.`プレフィックス）に対応していないため、`CustomLLM`を継承してboto3で直接Converse APIを呼び出すカスタムLLMを実装。
 
 ### 実行方法
 
-```powershell
+```
 python searcher.py "IAMロールはどこで定義されている？"
 python searcher.py "watchdogはどんな処理をしている？"
 ```
-
 ---
 
-## 8. MCPサーバー実装（Phase 4） ✅
+## 8. MCPサーバー
 
-### 公開しているMCPツール
+### 主要機能
 
 | ツール名 | 説明 |
 |---------|------|
-| `search_files` | 自然言語でPC内ファイルを検索（デフォルトまたは指定ディレクトリ） |
-| `reindex_files` | インデックスを手動更新 |
-| `index_status` | インデックス状態を確認 |
+| `search_files` | （メイン）自然言語でPC内ファイルを検索（デフォルトのパスまたは指定パス） |
+| `reindex_files` | （仮）インデックスを手動更新 |
+| `index_status` | （仮）インデックス状態を確認 |
 
 ### search_filesの使い方
 
@@ -351,42 +261,35 @@ python searcher.py "watchdogはどんな処理をしている？"
 
 **重要な注意点：**
 - 必ず「エクスプローラーについて」というキーワードを付けてください
-- ダブルクォート `"パス"` で囲むと、そのディレクトリ専用の一時インデックスが作成されます
-- パスを指定しない場合は、.envの`TARGET_DIRS`が使用されます
-
-### 起動時の動作
-1. インデックス読み込み
-2. 差分更新を1回実行（バックグラウンドで実行、タイムアウト防止）
-3. watchdogがバックグラウンドで常時監視開始
-4. ファイル変更を検知したら自動でインデックス更新（デバウンス3秒）
-
+- ダブルクォート `"パス"` で囲むと、そのディレクトリ専用のインデックスが作成されます
+- パスを指定しない場合は、.envの `TARGET_DIRS` が使用されます
 ---
 
-## 9. Claude for Desktop連携（Phase 5） ✅
+## 9. Claude for Desktop連携
 
 ### 設定ファイルの場所
 
-```
-C:\Users\nh200\AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json
-```
+Claude for Desktopを開く → ハンバーガーボタン → ファイル → 設定 → 開発者 → 設定を編集
 
-### 設定内容
+エクスプローラーが開くので、`claude_desktop_config.json` を開く
+
+### 以下の内容を張り付け
 
 ```json
 {
   "mcpServers": {
     "file-search-agent": {
-      "command": "C:\\Users\\nh200\\Cloude_Application_Development\\file-search-agent\\venv\\Scripts\\python.exe",
+      "command": "C:\\Users\\~\\file-search-agent\\venv\\Scripts\\python.exe",
       "args": [
-        "C:\\Users\\nh200\\Cloude_Application_Development\\file-search-agent\\mcp-server\\server.py"
+        "C:\\Users\\~\\file-search-agent\\mcp-server\\server.py"
       ],
       "env": {
-        "AWS_ACCESS_KEY_ID": "...",
-        "AWS_SECRET_ACCESS_KEY": "...",
-        "AWS_DEFAULT_REGION": "ap-northeast-1",
-        "TARGET_DIRS": "...",
-        "INDEX_DIR": "...",
-        "META_FILE": "...",
+        "AWS_ACCESS_KEY_ID": "<`file-search-bedrock-user`のアクセスキー>",
+        "AWS_SECRET_ACCESS_KEY": "<`file-search-bedrock-user`のシークレットキー>",
+        "AWS_DEFAULT_REGION": "<リージョン名>",
+        "TARGET_DIRS": "<デフォルトで指定するパス>",
+        "INDEX_DIR": "./data/index",
+        "META_FILE": "./data/index_meta.json",
         "EMBED_MODEL": "amazon.titan-embed-text-v2:0",
         "LLM_MODEL": "jp.anthropic.claude-sonnet-4-6"
       }
@@ -396,52 +299,16 @@ C:\Users\nh200\AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Cl
 ```
 
 ### 確認方法
-Claude for Desktop → Chat → + → コネクタ → `file-search-agent`がONになっていればOK
+Claude for Desktop → Chat → + → コネクタ → `file-search-agent` がONになっていればOK
 
+### 起動時の動作
+1. インデックス読み込み
+2. 差分更新を1回実行（バックグラウンドで実行、タイムアウト防止）
+3. watchdogがバックグラウンドで常時監視開始
+4. ファイル変更を検知したら自動でインデックス更新（デバウンス3秒）
 ---
 
-## 10. トラブルシューティング
-
-### Pythonバージョン問題
-Inkscapeのpython.exeがPATHに入っていて優先されていた。
-→ Windowsの設定アプリからInkscapeのパスを削除して解決。
-
-### OpenAI APIキーエラー
-LlamaIndexのデフォルトEmbeddingがOpenAIになっていた。
-→ `VectorStoreIndex([], embed_model=embed_model)`のように明示的にembed_modelを渡すことで解決。
-
-### watchdog無限ループ
-`data/index_meta.json`の変更をwatchdogが検知→更新→また検知のループ。
-→ `IGNORE_PATH_FRAGMENTS`で`\data\`パスのイベントを無視することで解決。
-
-### Bedrockモデルアクセス問題
-東京リージョン（ap-northeast-1）のon-demand呼び出し対応モデルはLEGACYのみ。
-新しいモデルは推論プロファイル経由が必要だが、`aws-marketplace:Subscribe`権限が必要。
-→ AdministratorAccessを持つ`natorihirofumi_cli`のキーを使うことで解決。
-
-### LlamaIndexのJP推論プロファイル非対応
-`BedrockConverse`クラスが`jp.`プレフィックスのモデルIDを認識しない。
-→ `CustomLLM`を継承してboto3で直接Converse APIを呼び出すカスタムLLMを実装して解決。
-
-### MCPのstdio通信エラー（JSON parse error）
-indexer.pyのprintがstdoutに出力され、MCPのJSON通信と混ざってクラッシュ。
-→ 全printを`file=sys.stderr`に変更して解決。
-
-### UnicodeEncodeError（絵文字クラッシュ）
-`✅`や`⚠`などの絵文字がWindowsのcp932エンコーディングで出力できずクラッシュ。
-→ 絵文字を全て削除して解決。
-
-### 空ファイルのベクトル化エラー
-`__init__.py`などの空ファイルをBedrockのEmbedding APIに送ると、`minLength: 1`のバリデーションエラーが発生。
-→ 10文字未満の短すぎるファイルをスキップする処理を追加して解決。
-
-### カスタムディレクトリ検索時のPermissionError
-`search_in_custom_dirs`で相対パス`./data/custom/...`を使用していたため、実行ディレクトリによってはアクセス拒否エラーが発生。
-→ `Path(__file__).parent`を使って絶対パスで指定することで解決。
-
----
-
-## 11. 使用例
+## 10. 使用例
 
 ### Claude for Desktopでの検索例
 
@@ -453,7 +320,7 @@ indexer.pyのprintがstdoutに出力され、MCPのJSON通信と混ざってク�
 
 **例2: 特定のプロジェクトフォルダを検索**
 ```
-エクスプローラーについて "C:/Users/nh200/Cloude_Application_Development/Motivation-Graph" の構成を教えて
+エクスプローラーについて "C:/Users/~" の構成を教えて
 ```
 → 指定したディレクトリ専用の一時インデックスを作成して検索
 
@@ -479,9 +346,8 @@ reindex_filesを実行して
 
 ---
 
-## 12. 今後の予定
+## 11. 今後の予定
 
-- [ ] `file-search-bedrock-user`への権限追加と切り替え
 - [ ] 対象ディレクトリの拡張（OneDrive・Documents など）
 - [ ] PDFサポートの追加検討
 - [ ] チャンク分割サイズの最適化（現在256文字）
